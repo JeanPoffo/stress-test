@@ -1,0 +1,170 @@
+services:
+  # PostgreSQL para projeto with-coroutine
+  postgres-coroutine:
+    image: postgres:14
+    container_name: postgres-coroutine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=root
+      - POSTGRES_DB=postgres
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 250M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    volumes:
+      - postgres_coroutine_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    entrypoint: [ "bash", "-c", "
+      docker-entrypoint.sh postgres &
+      sleep 5 &&
+      psql -U root -d postgres -c \"CREATE DATABASE coroutine;\" &&
+      sleep 2 &&
+      psql -U root -d coroutine -c \"CREATE TABLE car_entity (
+        id BIGSERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        manufacture TEXT NOT NULL,
+        year INTEGER NOT NULL
+      );\" &&
+      psql -U root -d coroutine -c \"INSERT INTO car_entity (name, manufacture, year) VALUES
+        ('Fusca', 'Volkswagen', 1984),
+        ('Uno', 'Fiat', 1995),
+        ('Gol', 'Volkswagen', 2003);\" &&
+      wait" ]
+    networks:
+      - coroutine-network
+
+  # PostgreSQL para projeto with-virtual-thread
+  postgres-virtual-thread:
+    image: postgres:14
+    container_name: postgres-virtual-thread
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=root
+      - POSTGRES_DB=postgres
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 250M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    volumes:
+      - postgres_virtual_thread_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    entrypoint: [ "bash", "-c", "
+      docker-entrypoint.sh postgres &
+      sleep 5 &&
+      psql -U root -d postgres -c \"CREATE DATABASE virtualthread;\" &&
+      sleep 2 &&
+      psql -U root -d virtualthread -c \"CREATE TABLE car_entity (
+        id BIGSERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        manufacture TEXT NOT NULL,
+        year INTEGER NOT NULL
+      );\" &&
+      psql -U root -d virtualthread -c \"INSERT INTO car_entity (name, manufacture, year) VALUES
+        ('Civic', 'Honda', 2020),
+        ('Corolla', 'Toyota', 2021),
+        ('Onix', 'Chevrolet', 2022);\" &&
+      wait" ]
+    networks:
+      - virtual-thread-network
+
+  # Aplicação with-coroutine
+  app-coroutine:
+    image: spring-coroutine:latest
+    container_name: app-coroutine
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-coroutine:5432/coroutine
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=root
+      - JAVA_OPTS=-Xmx200m -Xms128m
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 250M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    depends_on:
+      postgres-coroutine:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - coroutine-network
+
+  # Aplicação with-virtual-thread
+  app-virtual-thread:
+    image: spring-virtual-thread:latest
+    container_name: app-virtual-thread
+    ports:
+      - "8081:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-virtual-thread:5432/virtualthread
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=root
+      - JAVA_OPTS=-Xmx200m -Xms128m -Dspring.threads.virtual.enabled=true
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 250M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    depends_on:
+      postgres-virtual-thread:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - virtual-thread-network
+
+  # k6 com dashboard em tempo real
+  k6-dashboard:
+    image: grafana/k6:latest
+    container_name: k6-dashboard
+    command: run --out web-dashboard=port=5665 /scripts/car-load-test.js
+    volumes:
+      - ./k6/scripts:/scripts
+    ports:
+      - "5665:5665"
+    depends_on:
+      - app-coroutine
+      - app-virtual-thread
+    networks:
+      - coroutine-network
+      - virtual-thread-network
+    profiles:
+      - load-test-dashboard
+
+volumes:
+  postgres_coroutine_data:
+  postgres_virtual_thread_data:
+
+networks:
+  coroutine-network:
+    driver: bridge
+  virtual-thread-network:
+    driver: bridge
