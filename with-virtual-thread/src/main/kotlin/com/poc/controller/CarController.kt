@@ -13,8 +13,8 @@ class CarController(
 ) {
 
     @GetMapping("/cars")
-    fun get() = carUseCase.list()
+    fun get() = carUseCase.list().also { println(Thread.currentThread()) }
 
     @PostMapping("/cars")
-    fun save(@RequestBody car: Car) = carUseCase.create(car)
+    fun save(@RequestBody car: Car) = carUseCase.create(car).also { println(Thread.currentThread()) }
 }
